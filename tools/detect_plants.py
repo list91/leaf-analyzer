@@ -3,12 +3,14 @@ import sys
 from PIL import Image, ImageDraw, ImageFilter
 import math
 from collections import defaultdict
+import cv2
+import numpy as np
 
 def is_leaf_pixel(r, g, b):
     """
-    Более точная проверка зеленого пикселя
+    Определяет, является ли пиксель частью фона (не листа)
     """
-    return (
+    return not (
         g > 60 and 
         g > r * 1.1 and 
         g > b * 1.1 and 
@@ -86,7 +88,7 @@ def merge_nearby_regions(regions, max_distance=50):
 
 def detect_and_highlight_plants(image_path):
     """
-    Обнаружение и выделение листвы красным цветом
+    Обнаружение и выделение фона вокруг листьев
     """
     try:
         # Открытие и подготовка изображения
@@ -96,13 +98,13 @@ def detect_and_highlight_plants(image_path):
         draw = ImageDraw.Draw(image_rgb, 'RGBA')
         width, height = image_rgb.size
         
-        # Поиск связных областей листвы
+        # Поиск связных областей фона
         leaf_regions = []
         visited = set()
         
         def explore_region(start_x, start_y):
             """
-            Оптимизированное исследование области
+            Исследование связной области фона
             """
             region = []
             to_check = [(start_x, start_y)]
@@ -132,7 +134,7 @@ def detect_and_highlight_plants(image_path):
             return region
         
         # Оптимизированный поиск областей
-        step = 5  # Увеличиваем шаг для ускорения
+        step = 2  # Увеличиваем шаг для ускорения
         for x in range(0, width, step):
             for y in range(0, height, step):
                 if (x, y) not in visited:
@@ -158,17 +160,17 @@ def detect_and_highlight_plants(image_path):
                 fill_draw.point((x, y), fill=255)
             
             # Создаем контур путем вычитания размытой маски
-            blurred = outline_mask.filter(ImageFilter.GaussianBlur(0.5))  # Очень легкое размытие
+            blurred = outline_mask.filter(ImageFilter.GaussianBlur(0.1))  # Очень легкое размытие
             outline = Image.blend(outline_mask, blurred, -0.5)  # Уменьшаем интенсивность смешивания
             
             # Слегка размываем маску заливки для сглаживания
             fill_mask = fill_mask.filter(ImageFilter.GaussianBlur(1))
             
-            # Сначала рисуем контур (полупрозрачный светло-фиолетовый)
-            draw.bitmap((0, 0), outline, fill=(200, 100, 255, 128))
+            # Сначала рисуем контур (очень прозрачный светло-фиолетовый)
+            draw.bitmap((0, 0), outline, fill=(200, 100, 255, 8))
             
-            # Затем заливаем внутреннюю область (полупрозрачный светло-фиолетовый)
-            draw.bitmap((0, 0), fill_mask, fill=(200, 100, 255, 32))
+            # Затем заливаем внутреннюю область (почти невидимый)
+            draw.bitmap((0, 0), fill_mask, fill=(200, 100, 255, 8))
         
         # Сохранение результата
         results_dir = os.path.abspath(os.path.join(
@@ -187,13 +189,107 @@ def detect_and_highlight_plants(image_path):
         
         print(f"Обработано изображение: {image_path}")
         print(f"Результат сохранен: {output_path}")
-        print(f"Найдено областей листвы: {len(merged_regions)}")
+        print(f"Найдено областей фона: {len(merged_regions)}")
         
         return True
         
     except Exception as e:
         print(f"Ошибка при обработке {image_path}: {e}")
         return False
+
+def detect_and_highlight_objects(image_path, min_area=100):
+    """
+    Обнаружение и выделение границ объектов на изображении
+    
+    :param image_path: Путь к исходному изображению
+    :param min_area: Минимальная площадь контура для отрисовки
+    :return: Путь к обработанному изображению
+    """
+    try:
+        # Загрузка изображения
+        image = cv2.imread(image_path)
+        
+        # Преобразование в оттенки серого
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        
+        # Применение размытия для уменьшения шума
+        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+        
+        # Обнаружение краев с помощью алгоритма Кэнни
+        edges = cv2.Canny(blurred, 50, 200)
+        
+        # Нахождение контуров
+        contours, _ = cv2.findContours(
+            edges, 
+            cv2.RETR_EXTERNAL,  # Внешние контуры
+            cv2.CHAIN_APPROX_SIMPLE  # Упрощенное представление контуров
+        )
+        
+        # Отфильтровываем и рисуем контуры
+        for contour in contours:
+            # Вычисляем площадь контура
+            area = cv2.contourArea(contour)
+            
+            # Рисуем только значимые контуры
+            if area > min_area:
+                # Аппроксимация контура для сглаживания
+                perimeter = cv2.arcLength(contour, True)
+                approx = cv2.approxPolyDP(contour, 0.02 * perimeter, True)
+                
+                # Рисование контура
+                cv2.drawContours(
+                    image, 
+                    [approx], 
+                    0,  # Индекс контура
+                    (200, 100, 255),  # Цвет (светло-фиолетовый)
+                    2  # Толщина линии
+                )
+        
+        # Создаем директорию для результатов
+        results_dir = os.path.abspath(os.path.join(
+            os.path.dirname(__file__), 
+            '..', 
+            'images', 
+            'results'
+        ))
+        os.makedirs(results_dir, exist_ok=True)
+        
+        # Сохраняем результат
+        output_path = os.path.join(
+            results_dir, 
+            f'objects_highlighted_{os.path.basename(image_path)}'
+        )
+        cv2.imwrite(output_path, image)
+        
+        print(f"Обработано изображение: {image_path}")
+        print(f"Найдено контуров: {len(contours)}")
+        print(f"Результат сохранен: {output_path}")
+        
+        return output_path
+    
+    except Exception as e:
+        print(f"Ошибка при обработке {image_path}: {e}")
+        return None
+
+def process_directory(directory):
+    """
+    Обработка всех изображений в указанной директории
+    
+    :param directory: Путь к директории с изображениями
+    """
+    # Поддерживаемые расширения изображений
+    image_extensions = ['.png', '.jpg', '.jpeg', '.bmp', '.tiff']
+    
+    # Получаем список файлов
+    image_files = [
+        os.path.join(directory, f) for f in os.listdir(directory)
+        if os.path.isfile(os.path.join(directory, f)) and 
+        os.path.splitext(f)[1].lower() in image_extensions
+    ]
+    
+    # Обработка каждого изображения
+    for image_path in image_files:
+        detect_and_highlight_objects(image_path)
 
 def main():
     base_path = os.path.abspath(os.path.join(
