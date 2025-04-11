@@ -88,7 +88,7 @@ def merge_nearby_regions(regions, max_distance=50):
 
 def detect_and_highlight_plants(image_path):
     """
-    Обнаружение и выделение фона вокруг листьев
+    Обнаружение и выделение листьев с заливкой и красными контурами
     """
     try:
         # Открытие и подготовка изображения
@@ -98,13 +98,21 @@ def detect_and_highlight_plants(image_path):
         draw = ImageDraw.Draw(image_rgb, 'RGBA')
         width, height = image_rgb.size
         
-        # Поиск связных областей фона
+        # Преобразуем PIL Image в OpenCV формат
+        image_cv = cv2.cvtColor(np.array(image_rgb), cv2.COLOR_RGB2BGR)
+        
+        # Преобразование в оттенки серого для обнаружения контуров
+        gray = cv2.cvtColor(image_cv, cv2.COLOR_BGR2GRAY)
+        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+        edges = cv2.Canny(blurred, 50, 200)
+        
+        # Поиск связных областей листвы
         leaf_regions = []
         visited = set()
         
         def explore_region(start_x, start_y):
             """
-            Исследование связной области фона
+            Оптимизированное исследование области
             """
             region = []
             to_check = [(start_x, start_y)]
@@ -147,30 +155,41 @@ def detect_and_highlight_plants(image_path):
         # Объединение и отрисовка
         merged_regions = merge_nearby_regions(leaf_regions)
         
+        # Обнаружение контуров
+        contours, _ = cv2.findContours(
+            edges, 
+            cv2.RETR_EXTERNAL,  # Внешние контуры
+            cv2.CHAIN_APPROX_SIMPLE  # Упрощенное представление контуров
+        )
+        
+        # Отрисовка каждой области листвы
         for region in merged_regions:
             # Создаем маски для контура и заливки
-            outline_mask = Image.new('L', (width, height), 0)
-            fill_mask = Image.new('L', (width, height), 0)
-            outline_draw = ImageDraw.Draw(outline_mask)
-            fill_draw = ImageDraw.Draw(fill_mask)
+            mask = Image.new('L', (width, height), 0)
+            mask_draw = ImageDraw.Draw(mask)
             
-            # Рисуем точки на обеих масках
+            # Рисуем точки на маске
             for x, y in region:
-                outline_draw.point((x, y), fill=255)
-                fill_draw.point((x, y), fill=255)
+                mask_draw.point((x, y), fill=255)
             
-            # Создаем контур путем вычитания размытой маски
-            blurred = outline_mask.filter(ImageFilter.GaussianBlur(0.1))  # Очень легкое размытие
-            outline = Image.blend(outline_mask, blurred, -0.5)  # Уменьшаем интенсивность смешивания
+            # Находим контур с помощью OpenCV
+            region_mask_cv = np.array(mask)
+            contours, _ = cv2.findContours(
+                region_mask_cv, 
+                cv2.RETR_EXTERNAL, 
+                cv2.CHAIN_APPROX_SIMPLE
+            )
             
-            # Слегка размываем маску заливки для сглаживания
-            fill_mask = fill_mask.filter(ImageFilter.GaussianBlur(1))
+            # Заливка области
+            draw.bitmap((0, 0), mask, fill=(200, 100, 255, 50))  # Полупрозрачный светло-фиолетовый
             
-            # Сначала рисуем контур (очень прозрачный светло-фиолетовый)
-            draw.bitmap((0, 0), outline, fill=(200, 100, 255, 8))
-            
-            # Затем заливаем внутреннюю область (почти невидимый)
-            draw.bitmap((0, 0), fill_mask, fill=(200, 100, 255, 8))
+            # Рисование красных контуров
+            for contour in contours:
+                # Преобразуем контуры OpenCV в точки PIL
+                points = [tuple(point[0]) for point in contour]
+                
+                # Рисуем красный контур
+                draw.line(points + [points[0]], fill=(255, 0, 0, 255), width=3)
         
         # Сохранение результата
         results_dir = os.path.abspath(os.path.join(
@@ -185,91 +204,18 @@ def detect_and_highlight_plants(image_path):
             results_dir, 
             f'highlighted_{os.path.basename(image_path)}'
         )
+        
         image_rgb.save(output_path)
         
         print(f"Обработано изображение: {image_path}")
+        print(f"Найдено областей листвы: {len(merged_regions)}")
         print(f"Результат сохранен: {output_path}")
-        print(f"Найдено областей фона: {len(merged_regions)}")
         
         return True
         
     except Exception as e:
         print(f"Ошибка при обработке {image_path}: {e}")
         return False
-
-def detect_and_highlight_objects(image_path, min_area=100):
-    """
-    Обнаружение и выделение границ объектов на изображении
-    
-    :param image_path: Путь к исходному изображению
-    :param min_area: Минимальная площадь контура для отрисовки
-    :return: Путь к обработанному изображению
-    """
-    try:
-        # Загрузка изображения
-        image = cv2.imread(image_path)
-        
-        # Преобразование в оттенки серого
-        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        
-        # Применение размытия для уменьшения шума
-        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-        
-        # Обнаружение краев с помощью алгоритма Кэнни
-        edges = cv2.Canny(blurred, 50, 200)
-        
-        # Нахождение контуров
-        contours, _ = cv2.findContours(
-            edges, 
-            cv2.RETR_EXTERNAL,  # Внешние контуры
-            cv2.CHAIN_APPROX_SIMPLE  # Упрощенное представление контуров
-        )
-        
-        # Отфильтровываем и рисуем контуры
-        for contour in contours:
-            # Вычисляем площадь контура
-            area = cv2.contourArea(contour)
-            
-            # Рисуем только значимые контуры
-            if area > min_area:
-                # Аппроксимация контура для сглаживания
-                perimeter = cv2.arcLength(contour, True)
-                approx = cv2.approxPolyDP(contour, 0.02 * perimeter, True)
-                
-                # Рисование контура
-                cv2.drawContours(
-                    image, 
-                    [approx], 
-                    0,  # Индекс контура
-                    (200, 100, 255),  # Цвет (светло-фиолетовый)
-                    2  # Толщина линии
-                )
-        
-        # Создаем директорию для результатов
-        results_dir = os.path.abspath(os.path.join(
-            os.path.dirname(__file__), 
-            '..', 
-            'images', 
-            'results'
-        ))
-        os.makedirs(results_dir, exist_ok=True)
-        
-        # Сохраняем результат
-        output_path = os.path.join(
-            results_dir, 
-            f'objects_highlighted_{os.path.basename(image_path)}'
-        )
-        cv2.imwrite(output_path, image)
-        
-        print(f"Обработано изображение: {image_path}")
-        print(f"Найдено контуров: {len(contours)}")
-        print(f"Результат сохранен: {output_path}")
-        
-        return output_path
-    
-    except Exception as e:
-        print(f"Ошибка при обработке {image_path}: {e}")
-        return None
 
 def process_directory(directory):
     """
@@ -289,34 +235,21 @@ def process_directory(directory):
     
     # Обработка каждого изображения
     for image_path in image_files:
-        detect_and_highlight_objects(image_path)
+        detect_and_highlight_plants(image_path)
 
 def main():
-    base_path = os.path.abspath(os.path.join(
+    # Путь к директории с изображениями
+    images_dir = os.path.abspath(os.path.join(
         os.path.dirname(__file__), 
         '..', 
         'images', 
         'normal_plants'
     ))
     
-    try:
-        images = [
-            os.path.join(base_path, filename) 
-            for filename in os.listdir(base_path) 
-            if filename.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp'))
-        ]
-    except FileNotFoundError:
-        print(f"Директория не найдена: {base_path}")
-        sys.exit(1)
+    # Обработка всех изображений
+    process_directory(images_dir)
     
-    processed_images = []
-    for image_path in images:
-        if detect_and_highlight_plants(image_path):
-            processed_images.append(image_path)
-    
-    print("\n--- Результаты ---")
-    print(f"Всего изображений: {len(images)}")
-    print(f"Обработано изображений: {len(processed_images)}")
+    print("Обработка завершена.")
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
