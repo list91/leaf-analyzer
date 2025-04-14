@@ -11,7 +11,7 @@ from cnn_model import load_model
 from cnn_visualize import preprocess_image, predict_image
 
 def detect_leaves(image_path, model_path, output_path=None, device='cpu', 
-                  min_blob_size=300, detection_threshold=0.5):
+                  min_blob_size=300, detection_threshold=0.7):
     """
     Обнаружение и классификация отдельных листьев на изображении
     с использованием алгоритма водораздела (watershed)
@@ -235,7 +235,7 @@ def process_directory(input_dir, model_path, output_dir=None, device='cpu'):
         
         try:
             result_image, leaf_count, healthy_count, diseased_count = detect_leaves(
-                image_path, model_path, output_path, device
+                image_path, model_path, output_path, device, detection_threshold=0.7
             )
             
             print(f"Найдено листьев: {leaf_count} (Здоровых: {healthy_count}, Больных: {diseased_count})")
