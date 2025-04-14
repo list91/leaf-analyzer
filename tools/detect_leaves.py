@@ -170,8 +170,11 @@ def detect_leaves(image_path, model_path, output_path=None, device='cpu',
                 
             print(f"Лист {leaf_count}: {label_text}")
             
-            # Рисуем прямоугольник и текст
-            draw.rectangle([x, y, x+w, y+h], outline=color, width=3)
+            # Расчет толщины линии на основе уверенности (от 1 до 6 пикселей)
+            line_width = int(1 + confidence * 5)  # min=1, max=6
+            
+            # Рисуем прямоугольник и текст с изменяемой толщиной
+            draw.rectangle([x, y, x+w, y+h], outline=color, width=line_width)
             
             # Добавляем черный фон для текста для лучшей видимости
             text_w, text_h = font.getsize(label_text) if hasattr(font, 'getsize') else draw.textbbox((0, 0), label_text, font=font)[2:4]
