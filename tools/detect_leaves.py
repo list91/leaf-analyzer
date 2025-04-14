@@ -11,7 +11,7 @@ from cnn_model import load_model
 from cnn_visualize import preprocess_image, predict_image
 
 def detect_leaves(image_path, model_path, output_path=None, device='cpu', 
-                  min_blob_size=300, detection_threshold=0.7):
+                  min_width=32, min_height=32, detection_threshold=0.6):
     """
     Обнаружение и классификация отдельных листьев на изображении
     с использованием алгоритма водораздела (watershed)
@@ -21,7 +21,8 @@ def detect_leaves(image_path, model_path, output_path=None, device='cpu',
         model_path: путь к модели
         output_path: путь для сохранения результата
         device: устройство для вычислений
-        min_blob_size: минимальный размер области для классификации (в пикселях)
+        min_width: минимальная ширина листа в пикселях
+        min_height: минимальная высота листа в пикселях
         detection_threshold: порог для обнаружения листьев
     """
     # Загрузка модели
@@ -42,7 +43,7 @@ def detect_leaves(image_path, model_path, output_path=None, device='cpu',
     hsv = cv2.cvtColor(image_np, cv2.COLOR_RGB2HSV)
     
     # Расширенный диапазон для зеленого цвета (листья)
-    lower_green = np.array([20, 30, 30])
+    lower_green = np.array([20, 20, 20])
     upper_green = np.array([100, 255, 255])
     green_mask = cv2.inRange(hsv, lower_green, upper_green)
     
@@ -50,17 +51,24 @@ def detect_leaves(image_path, model_path, output_path=None, device='cpu',
     cv2.imwrite(os.path.join(debug_dir, "1_initial_mask.png"), green_mask)
     
     # Применяем морфологические операции для улучшения сегментации
-    kernel = np.ones((5, 5), np.uint8)
+    kernel = np.ones((3, 3), np.uint8)  
     opening = cv2.morphologyEx(green_mask, cv2.MORPH_OPEN, kernel, iterations=1)
     cv2.imwrite(os.path.join(debug_dir, "2_opening.png"), opening)
     
-    # Дилатация для увеличения областей
-    sure_bg = cv2.dilate(opening, kernel, iterations=3)
+    # Применяем закрытие для заполнения дыр в листьях (помогает с пятнами болезней)
+    closing = cv2.morphologyEx(opening, cv2.MORPH_CLOSE, kernel, iterations=1)  
+    cv2.imwrite(os.path.join(debug_dir, "2_1_closing.png"), closing)
+    
+    # Уменьшаем интенсивность дилатации для предотвращения слияния близких листьев
+    sure_bg = cv2.dilate(closing, kernel, iterations=1)  
     cv2.imwrite(os.path.join(debug_dir, "3_sure_bg.png"), sure_bg)
     
     # Дистанционное преобразование для определения центров листьев
-    dist_transform = cv2.distanceTransform(opening, cv2.DIST_L2, 5)
-    _, sure_fg = cv2.threshold(dist_transform, 0.2*dist_transform.max(), 255, 0)
+    dist_transform = cv2.distanceTransform(opening, cv2.DIST_L2, 3)  
+    
+    # Адаптивный порог для лучшего выделения отдельных объектов
+    dist_max = dist_transform.max()
+    _, sure_fg = cv2.threshold(dist_transform, 0.3*dist_max, 255, 0)  
     sure_fg = np.uint8(sure_fg)
     cv2.imwrite(os.path.join(debug_dir, "4_sure_fg.png"), sure_fg)
     
@@ -69,12 +77,27 @@ def detect_leaves(image_path, model_path, output_path=None, device='cpu',
     cv2.imwrite(os.path.join(debug_dir, "5_unknown.png"), unknown)
     
     # Маркировка маркеров для водораздела
-    _, markers = cv2.connectedComponents(sure_fg)
-    markers = markers + 1
-    markers[unknown == 255] = 0
+    # Используем метод connectedComponentsWithStats для получения статистики по компонентам
+    ret, markers = cv2.connectedComponents(sure_fg)
     
-    # Применение алгоритма водораздела
-    markers = cv2.watershed(image_np, markers)
+    # Получаем статистику по компонентам для фильтрации слишком маленьких
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(sure_fg)
+    
+    # Фильтруем маленькие компоненты
+    min_size = 10  # Уменьшаем минимальный размер компоненты для обнаружения мелких листьев
+    filtered_markers = np.zeros_like(markers)
+    for i in range(1, num_labels):
+        if stats[i, cv2.CC_STAT_AREA] >= min_size:
+            filtered_markers[markers == i] = i
+    
+    # Увеличиваем индексы на 1, чтобы фон был 1, а не 0
+    filtered_markers = filtered_markers + 1
+    
+    # Устанавливаем неизвестные области в 0
+    filtered_markers[unknown == 255] = 0
+    
+    # Применение алгоритма водораздела с отфильтрованными маркерами
+    markers = cv2.watershed(image_np, filtered_markers)
     image_np[markers == -1] = [0, 0, 255]  # Отмечаем границы красным цветом
     
     # Сохраняем изображение с маркерами
@@ -100,42 +123,96 @@ def detect_leaves(image_path, model_path, output_path=None, device='cpu',
     except IOError:
         font = ImageFont.load_default()
     
-    # Классификация каждого сегмента (каждого потенциального листа)
-    leaf_count = 0
-    healthy_count = 0
-    diseased_count = 0
-    
     # Уникальные маркеры (исключая фон (1) и границы (-1))
     unique_markers = np.unique(markers)
     unique_markers = unique_markers[unique_markers > 1]  # Исключаем фон и границы
     
     print(f"Найдено {len(unique_markers)} потенциальных листьев")
     
+    # Классификация каждого сегмента (каждого потенциального листа)
+    leaf_count = 0
+    healthy_count = 0
+    diseased_count = 0
+    
+    # Обрабатываем каждый маркер (потенциальный лист или часть листа)
     for marker in unique_markers:
         # Создаем маску для текущего маркера
         marker_mask = (markers == marker).astype(np.uint8) * 255
         
-        # Проверяем размер области
-        if np.sum(marker_mask) / 255 < min_blob_size:
+        # Проверяем размер области - уменьшаем минимальный порог для обнаружения
+        # частичных листьев на краях изображения
+        if np.sum(marker_mask) / 255 < min_width * min_height:
             continue
         
-        # Находим ограничивающий прямоугольник
+        # Находим контуры маркера
         contours, _ = cv2.findContours(marker_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if not contours:
             continue
             
+        # Используем самый большой контур
         largest_contour = max(contours, key=cv2.contourArea)
-        x, y, w, h = cv2.boundingRect(largest_contour)
         
-        # Добавляем отступы к прямоугольнику
-        padding = 10
-        x = max(0, x - padding)
-        y = max(0, y - padding)
-        w = min(image_np.shape[1] - x, w + 2*padding)
-        h = min(image_np.shape[0] - y, h + 2*padding)
+        # Используем выпуклую оболочку для лучшего определения формы листа,
+        # особенно когда есть пятна или другие дефекты
+        hull = cv2.convexHull(largest_contour)
+        
+        # Получаем ограничивающий прямоугольник
+        x, y, w, h = cv2.boundingRect(hull)
+        
+        # Добавляем отступ в 10% от размеров прямоугольника для лучшего захвата
+        padding_w = int(w * 0.1)
+        padding_h = int(h * 0.1)
+        
+        x = max(0, x - padding_w)
+        y = max(0, y - padding_h)
+        w = min(image_np.shape[1] - x, w + 2*padding_w)
+        h = min(image_np.shape[0] - y, h + 2*padding_h)
+        
+        # Проверяем минимальную ширину и высоту
+        if w < min_width or h < min_height:
+            continue
         
         # Вырезаем область с листом
         leaf_image = image_np[y:y+h, x:x+w]
+        
+        # Проверяем, что вырезанная область содержит достаточно зеленого цвета 
+        # (характерного для листа)
+        hsv_leaf = cv2.cvtColor(leaf_image, cv2.COLOR_RGB2HSV)
+        lower_green = np.array([20, 20, 20])  
+        upper_green = np.array([100, 255, 255])
+        green_mask = cv2.inRange(hsv_leaf, lower_green, upper_green)
+        
+        # Если зеленого пигмента слишком мало, это, вероятно, не лист
+        # Снижаем требуемый процент зеленого с 10% до 5%
+        green_ratio = np.sum(green_mask) / (w * h * 255)
+        if green_ratio < 0.05:  
+            continue
+            
+        # Анализ наличия темных пятен (характерных для болезней)
+        # Диапазон для темных/коричневых пятен в HSV
+        lower_disease = np.array([0, 0, 0])
+        upper_disease = np.array([30, 255, 150])  
+        
+        # Создаем маску для потенциально больных участков
+        disease_mask = cv2.inRange(hsv_leaf, lower_disease, upper_disease)
+        
+        # Улучшаем маску болезни с помощью морфологических операций
+        kernel = np.ones((3, 3), np.uint8)
+        disease_mask = cv2.morphologyEx(disease_mask, cv2.MORPH_OPEN, kernel, iterations=1)
+        disease_mask = cv2.morphologyEx(disease_mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+        
+        # Расчет соотношения площади болезни к площади листа
+        # (только в пределах зеленой маски - т.е. где действительно есть лист)
+        disease_in_leaf = cv2.bitwise_and(disease_mask, green_mask)
+        disease_ratio = np.sum(disease_in_leaf) / (np.sum(green_mask) + 1)  
+        
+        # Сохраняем отладочное изображение маски болезни
+        if output_path:
+            debug_disease_path = os.path.join(os.path.dirname(output_path), f"debug_disease_{marker}.png")
+            cv2.imwrite(debug_disease_path, disease_mask)
+        
+        # Если доля больной ткани больше 7%, считаем лист больным
+        disease_indicator = disease_ratio > 0.07  
         
         # Конвертируем в PIL Image
         leaf_pil = Image.fromarray(leaf_image)
@@ -151,6 +228,16 @@ def detect_leaves(image_path, model_path, output_path=None, device='cpu',
             # Удаляем временный файл
             if os.path.exists(temp_path):
                 os.remove(temp_path)
+                
+            # Корректируем предсказание на основе анализа пятен
+            # Если мы видим явные признаки болезни (темные пятна) и уверенность модели не очень высока,
+            # повышаем вероятность болезни
+            if disease_indicator and pred_class == 0 and confidence < 0.85:
+                # Меняем класс на "больной"
+                pred_class = 1
+                # Уверенность зависит от соотношения пятен
+                confidence = max(0.7, min(0.95, disease_ratio * 5))
+                print(f"Изменена классификация на основе анализа пятен (disease_ratio: {disease_ratio:.3f})")
                 
             # Если уверенность ниже порога, пропускаем
             if confidence < detection_threshold:
@@ -171,7 +258,7 @@ def detect_leaves(image_path, model_path, output_path=None, device='cpu',
             print(f"Лист {leaf_count}: {label_text}")
             
             # Расчет толщины линии на основе уверенности (от 1 до 6 пикселей)
-            line_width = int(1 + confidence * 5)  # min=1, max=6
+            line_width = int(1 + confidence * 5)  
             
             # Рисуем прямоугольник и текст с изменяемой толщиной
             draw.rectangle([x, y, x+w, y+h], outline=color, width=line_width)
@@ -182,7 +269,7 @@ def detect_leaves(image_path, model_path, output_path=None, device='cpu',
             draw.text((x, y), label_text, fill="white", font=font)
             
         except Exception as e:
-            print(f"Ошибка при классификации области {marker}: {str(e)}")
+            print(f"Ошибка при классификации области {leaf_count}: {str(e)}")
             if os.path.exists(temp_path):
                 os.remove(temp_path)
             continue
@@ -235,7 +322,8 @@ def process_directory(input_dir, model_path, output_dir=None, device='cpu'):
         
         try:
             result_image, leaf_count, healthy_count, diseased_count = detect_leaves(
-                image_path, model_path, output_path, device, detection_threshold=0.7
+                image_path, model_path, output_path, device, 
+                min_width=32, min_height=32, detection_threshold=0.6
             )
             
             print(f"Найдено листьев: {leaf_count} (Здоровых: {healthy_count}, Больных: {diseased_count})")
