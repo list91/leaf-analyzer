@@ -11,7 +11,7 @@ from cnn_model import load_model
 from cnn_visualize import preprocess_image, predict_image
 
 def detect_leaves(image_path, model_path, output_path=None, device='cpu', 
-                  min_width=32, min_height=32, detection_threshold=0.6):
+                  min_width=32, min_height=32, detection_threshold=0.02):
     """
     Обнаружение и классификация отдельных листьев на изображении
     с использованием алгоритма водораздела (watershed)
@@ -64,12 +64,17 @@ def detect_leaves(image_path, model_path, output_path=None, device='cpu',
     cv2.imwrite(os.path.join(debug_dir, "3_sure_bg.png"), sure_bg)
     
     # Дистанционное преобразование для определения центров листьев
-    dist_transform = cv2.distanceTransform(opening, cv2.DIST_L2, 3)  
+    dist_transform = cv2.distanceTransform(opening, cv2.DIST_L2, 3)
     
-    # Адаптивный порог для лучшего выделения отдельных объектов
+    # Используем более агрессивный порог для лучшего разделения объектов
     dist_max = dist_transform.max()
-    _, sure_fg = cv2.threshold(dist_transform, 0.3*dist_max, 255, 0)  
+    _, sure_fg = cv2.threshold(dist_transform, 0.2*dist_max, 255, 0)  
     sure_fg = np.uint8(sure_fg)
+    
+    # Применяем дополнительное размыкание для лучшего разделения объектов
+    kernel_small = np.ones((2, 2), np.uint8)
+    sure_fg = cv2.erode(sure_fg, kernel_small, iterations=1)
+    
     cv2.imwrite(os.path.join(debug_dir, "4_sure_fg.png"), sure_fg)
     
     # Определение неизвестной области
@@ -152,9 +157,18 @@ def detect_leaves(image_path, model_path, output_path=None, device='cpu',
         # Используем самый большой контур
         largest_contour = max(contours, key=cv2.contourArea)
         
+        # Фильтруем контуры с очень малой площадью
+        contour_area = cv2.contourArea(largest_contour)
+        if contour_area < min_width * min_height * 0.3:  # Минимальная площадь относительно размеров
+            continue
+            
+        # Сглаживаем контур для более плавной формы листа
+        epsilon = 0.005 * cv2.arcLength(largest_contour, True)
+        approx_contour = cv2.approxPolyDP(largest_contour, epsilon, True)
+        
         # Используем выпуклую оболочку для лучшего определения формы листа,
         # особенно когда есть пятна или другие дефекты
-        hull = cv2.convexHull(largest_contour)
+        hull = cv2.convexHull(approx_contour)
         
         # Получаем ограничивающий прямоугольник
         x, y, w, h = cv2.boundingRect(hull)
@@ -247,22 +261,22 @@ def detect_leaves(image_path, model_path, output_path=None, device='cpu',
             
             # Определение класса и цвета прямоугольника
             if pred_class == 0:  # Здоровый
-                color = "green"
-                label_text = f"Здоровый ({confidence:.2f})"
                 healthy_count += 1
+                # Не рисуем бокс для здорового листа
+                continue
             else:  # Больной
                 color = "red"
                 label_text = f"Больной ({confidence:.2f})"
                 diseased_count += 1
-                
+
             print(f"Лист {leaf_count}: {label_text}")
-            
+
             # Расчет толщины линии на основе уверенности (от 1 до 6 пикселей)
             line_width = int(1 + confidence * 5)  
-            
+
             # Рисуем прямоугольник и текст с изменяемой толщиной
             draw.rectangle([x, y, x+w, y+h], outline=color, width=line_width)
-            
+
             # Добавляем черный фон для текста для лучшей видимости
             text_w, text_h = font.getsize(label_text) if hasattr(font, 'getsize') else draw.textbbox((0, 0), label_text, font=font)[2:4]
             draw.rectangle([x, y, x+text_w, y+text_h], fill=color)
@@ -323,7 +337,7 @@ def process_directory(input_dir, model_path, output_dir=None, device='cpu'):
         try:
             result_image, leaf_count, healthy_count, diseased_count = detect_leaves(
                 image_path, model_path, output_path, device, 
-                min_width=32, min_height=32, detection_threshold=0.6
+                min_width=32, min_height=32, detection_threshold=0.2
             )
             
             print(f"Найдено листьев: {leaf_count} (Здоровых: {healthy_count}, Больных: {diseased_count})")
