@@ -6,8 +6,8 @@ import matplotlib.pyplot as plt
 from PIL import Image
 from sklearn.metrics import confusion_matrix, classification_report
 
-from cnn_model import load_model
-from cnn_visualize import preprocess_image, predict_image
+from tools.cnn_model import load_model
+from tools.cnn_visualize import preprocess_image, predict_image
 
 def test_random_images(data_dir, model_path, num_images=10, device='cpu'):
     """

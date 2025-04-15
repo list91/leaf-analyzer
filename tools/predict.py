@@ -1,9 +1,9 @@
 import os
 import torch
 import torch.nn.functional as F
-from preprocessing import LeafPreprocessor
+from utils.preprocessing import LeafPreprocessor
+from utils.logger import prediction_logger as logger
 from model import create_model, load_checkpoint
-from logger import prediction_logger as logger
 
 class LeafPredictor:
     def __init__(self, model_path, device='cpu'):

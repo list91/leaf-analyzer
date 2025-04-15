@@ -8,8 +8,8 @@ import glob
 from datetime import datetime
 from sklearn.metrics import accuracy_score, confusion_matrix
 
-from preprocessing import LeafPreprocessor
 from model import create_model, load_checkpoint
+from utils.preprocessing import LeafPreprocessor
 
 def load_best_model(checkpoints_dir, device='cpu'):
     """

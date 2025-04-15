@@ -6,7 +6,7 @@ from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_sc
 import glob
 from datetime import datetime
 
-from preprocessing import LeafPreprocessor
+from utils.preprocessing import LeafPreprocessor
 from model import create_model, load_checkpoint
 from dataset import prepare_data_loaders
 

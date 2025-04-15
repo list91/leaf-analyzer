@@ -3,7 +3,7 @@ import numpy as np
 from PIL import Image
 import torch
 from torchvision import transforms
-from logger import preprocessing_logger as logger
+from utils.logger import preprocessing_logger as logger
 
 class LeafPreprocessor:
     def __init__(self):

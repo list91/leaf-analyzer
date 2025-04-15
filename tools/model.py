@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torchvision.models as models
-from logger import model_logger as logger
+from utils.logger import model_logger as logger
 
 class LeafClassifier(nn.Module):
     def __init__(self, num_classes=2, pretrained=True):

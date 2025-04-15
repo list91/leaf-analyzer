@@ -2,8 +2,8 @@ import os
 import torch
 from torch.utils.data import Dataset, DataLoader
 from sklearn.model_selection import train_test_split
-from preprocessing import LeafPreprocessor
-from logger import dataset_logger as logger
+from utils.preprocessing import LeafPreprocessor
+from utils.logger import dataset_logger as logger
 
 class LeafDataset(Dataset):
     def __init__(self, image_paths, labels):

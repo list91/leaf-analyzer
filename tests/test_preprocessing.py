@@ -1,5 +1,5 @@
 import os
-from preprocessing import visualize_preprocessing
+from utils.preprocessing import visualize_preprocessing
 
 def test_preprocessor():
     # Путь к тестовому изображению из normal_plants

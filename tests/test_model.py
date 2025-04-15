@@ -10,8 +10,8 @@ import cv2
 import glob
 from datetime import datetime
 
-from preprocessing import LeafPreprocessor
-from model import create_model, load_checkpoint
+from tools.model import create_model, load_checkpoint
+from utils.preprocessing import LeafPreprocessor
 
 def load_best_model(checkpoints_dir, device='cpu'):
     """
