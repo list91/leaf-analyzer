@@ -221,9 +221,9 @@ def detect_leaves(image_path, model_path, output_path=None, device='cpu',
         disease_ratio = np.sum(disease_in_leaf) / (np.sum(green_mask) + 1)  
         
         # Сохраняем отладочное изображение маски болезни
-        if output_path:
-            debug_disease_path = os.path.join(os.path.dirname(output_path), f"debug_disease_{marker}.png")
-            cv2.imwrite(debug_disease_path, disease_mask)
+        # if output_path:
+        #     debug_disease_path = os.path.join(os.path.dirname(output_path), f"debug_disease_{marker}.png")
+        #     cv2.imwrite(debug_disease_path, disease_mask)
         
         # Если доля больной ткани больше 7%, считаем лист больным
         disease_indicator = disease_ratio > 0.07  
