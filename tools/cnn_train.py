@@ -229,7 +229,7 @@ def train_and_evaluate(data_dir, num_epochs=20, batch_size=16, learning_rate=1e-
     # Определение функции потерь и оптимизатора
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=5, verbose=True)
+    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=5)
     
     # Создание директории для сохранения чекпоинтов
     if checkpoint_dir is None:
