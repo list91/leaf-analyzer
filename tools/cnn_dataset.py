@@ -129,8 +129,10 @@ def prepare_data_loaders(data_dir, batch_size=16, test_size=0.2, val_size=0.1, a
         train_loader, val_loader, test_loader: загрузчики данных
     """
     # Сбор путей к изображениям и меток
-    disease_dir = os.path.join(data_dir, 'disease_plants')
-    normal_dir = os.path.join(data_dir, 'normal_plants')
+    #disease_dir = os.path.join(data_dir, 'disease_plants')
+    #normal_dir = os.path.join(data_dir, 'normal_plants')
+    disease_dir = os.path.join(data_dir, 'full_dis_aug')
+    normal_dir = os.path.join(data_dir, 'full_nor_aug')
     
     disease_files = [f for f in os.listdir(disease_dir) if f.endswith(('.jpg', '.jpeg', '.png'))]
     normal_files = [f for f in os.listdir(normal_dir) if f.endswith(('.jpg', '.jpeg', '.png'))]

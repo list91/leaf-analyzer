@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 from PIL import Image, ImageDraw, ImageFont
 import random
 from scipy import ndimage
+import argparse
 
 from cnn_model import load_model
 from cnn_visualize import preprocess_image, predict_image
@@ -174,8 +175,8 @@ def detect_leaves(image_path, model_path, output_path=None, device='cpu',
         x, y, w, h = cv2.boundingRect(hull)
         
         # Добавляем отступ в 10% от размеров прямоугольника для лучшего захвата
-        padding_w = int(w * 0.1)
-        padding_h = int(h * 0.1)
+        padding_w = int(w * 0.01)
+        padding_h = int(h * 0.01)
         
         x = max(0, x - padding_w)
         y = max(0, y - padding_h)
@@ -246,14 +247,12 @@ def detect_leaves(image_path, model_path, output_path=None, device='cpu',
             # Корректируем предсказание на основе анализа пятен
             # Если мы видим явные признаки болезни (темные пятна) и уверенность модели не очень высока,
             # повышаем вероятность болезни
+            # Убедимся, что confidence не изменяется искусственно
             if disease_indicator and pred_class == 0 and confidence < 0.85:
-                # Меняем класс на "больной"
                 pred_class = 1
-                # Уверенность зависит от соотношения пятен
-                confidence = max(0.7, min(0.95, disease_ratio * 5))
-                print(f"Изменена классификация на основе анализа пятен (disease_ratio: {disease_ratio:.3f})")
-                
-            # Если уверенность ниже порога, пропускаем
+                confidence = disease_ratio * 5  # Убираем max/min для честной проверки
+
+            # Проверяем порог уверенности
             if confidence < detection_threshold:
                 continue
                 
@@ -300,6 +299,84 @@ def detect_leaves(image_path, model_path, output_path=None, device='cpu',
     # Возвращаем результат
     return result_image, leaf_count, healthy_count, diseased_count
 
+def classify_regions(image_path, model_path, output_path=None, device='cpu',
+                     region_size=(192*3, 192*3), step_size=(96*3, 96*3), detection_threshold=0.9):
+    """
+    Классификация участков изображения без сегментации.
+
+    Args:
+        image_path: путь к изображению
+        model_path: путь к модели
+        output_path: путь для сохранения результата
+        device: устройство для вычислений
+        region_size: размер окна для классификации (в пикселях)
+        step_size: шаг окна (в пикселях)
+        detection_threshold: порог для классификации как больной участок
+    """
+    # Загрузка модели
+    print(f"Загрузка модели из {model_path}...")
+    model, _ = load_model(model_path, device)
+    model.eval()
+
+    # Загрузка изображения
+    print(f"Обработка изображения: {image_path}")
+    original_image = Image.open(image_path).convert('RGB')
+    image_np = np.array(original_image)
+
+    # Создаем копию изображения для отрисовки результатов
+    result_image = original_image.copy()
+    draw = ImageDraw.Draw(result_image)
+
+    # Попытка загрузки шрифта (для Windows)
+    try:
+        font = ImageFont.truetype("arial.ttf", 20)
+    except IOError:
+        font = ImageFont.load_default()
+
+    # Размеры изображения
+    height, width, _ = image_np.shape
+
+    # Перебор участков изображения
+    for y in range(0, height - region_size[1] + 1, step_size[1]):
+        for x in range(0, width - region_size[0] + 1, step_size[0]):
+            # Вырезаем участок
+            region = image_np[y:y + region_size[1], x:x + region_size[0]]
+
+            # Конвертируем в PIL Image и сохраняем временно
+            region_pil = Image.fromarray(region)
+            temp_path = os.path.join(os.path.dirname(image_path), f"temp_region_{x}_{y}.jpg")
+            region_pil.save(temp_path)
+
+            try:
+                # Классификация участка
+                pred_class, confidence, _ = predict_image(model, temp_path, device)
+
+                # Удаляем временный файл
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+
+                if pred_class == 1 and confidence >= detection_threshold:
+                    # Участок классифицирован как больной с достаточной уверенностью
+                    label_text = f"Больной ({confidence:.2f})"
+                    color = "red"
+
+                    # Рисуем прямоугольник и текст
+                    draw.rectangle([x, y, x + region_size[0], y + region_size[1]], outline=color, width=2)
+                    draw.text((x, y), label_text, fill="white", font=font)
+                else:
+                    # Участок не соответствует порогу уверенности
+                    continue
+
+            except Exception as e:
+                print(f"Ошибка при классификации участка ({x}, {y}): {str(e)}")
+
+    # Сохраняем результат
+    if output_path:
+        result_image.save(output_path)
+        print(f"Результат сохранен в {output_path}")
+
+    return result_image
+
 def process_directory(input_dir, model_path, output_dir=None, device='cpu'):
     """
     Обработка всех изображений в директории
@@ -336,29 +413,36 @@ def process_directory(input_dir, model_path, output_dir=None, device='cpu'):
         
         try:
             result_image, leaf_count, healthy_count, diseased_count = detect_leaves(
-                image_path, model_path, output_path, device, 
-                min_width=32, min_height=32, detection_threshold=0.2
+                image_path, model_path, output_path, device,
+                min_width=32, min_height=32, detection_threshold=0.5
             )
             
-            print(f"Найдено листьев: {leaf_count} (Здоровых: {healthy_count}, Больных: {diseased_count})")
+            print(f"Обработка завершена для {image_file}")
         except Exception as e:
             print(f"Ошибка при обработке {image_file}: {str(e)}")
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description="Обнаружение и классификация листьев на изображениях.")
+    parser.add_argument('--model_path', type=str, default=None, help="Путь к модели. Если не указан, используется последняя модель.")
+    args = parser.parse_args()
+
     # Путь к данным
     test_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'images', 'test')
-    
-    # Получение последней модели
+
+    # Получение модели
     checkpoint_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'checkpoints')
-    model_files = [f for f in os.listdir(checkpoint_dir) if f.endswith('.pth')]
-    latest_model = sorted(model_files)[-1]
-    model_path = os.path.join(checkpoint_dir, latest_model)
-    
+    if args.model_path:
+        model_path = args.model_path
+    else:
+        model_files = [f for f in os.listdir(checkpoint_dir) if f.endswith('.pth')]
+        latest_model = sorted(model_files)[-1]
+        model_path = os.path.join(checkpoint_dir, latest_model)
+
+    print(f"Используется модель: {model_path}")
+
     # Директория для результатов
     results_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'results', 'detection')
     os.makedirs(results_dir, exist_ok=True)
-    
-    print(f"Используется модель: {latest_model}")
-    
+
     # Обработка всех изображений в тестовой директории
     process_directory(test_dir, model_path, results_dir)

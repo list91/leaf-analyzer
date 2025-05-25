@@ -54,6 +54,6 @@ def augment_images(input_dir, output_dir, num_augmentations=5):
         print(f"Прогресс: {progress:.2f}% ({idx + 1}/{total_images})")
 
 if __name__ == "__main__":
-    input_directory = "/home/user/leaf-analyzer/images/disease_plants"
-    output_directory = "/home/user/leaf-analyzer/images/augmented_disease_plants"
+    input_directory = "/home/user/leaf-analyzer/images/normal_plants"
+    output_directory = "/home/user/leaf-analyzer/images/augmented_stock/augmented_normal_plants"
     augment_images(input_directory, output_directory, num_augmentations=5)

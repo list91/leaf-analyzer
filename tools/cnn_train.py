@@ -322,5 +322,5 @@ if __name__ == '__main__':
         batch_size=16,  
         learning_rate=1e-4,
         advanced_preprocessing=True,
-        max_images_per_class=700  # Увеличиваем до 500 изображений на класс
+        max_images_per_class=5000  # Увеличиваем до 500 изображений на класс
     )
